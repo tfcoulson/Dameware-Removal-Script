@@ -5,17 +5,21 @@ $logfile = "$env:systemdrive\Temp\DW-remove.log"
 $ServiceList = "DWMRCS",
 "DNTUS26"
 
-#Set Registry Path
+#Set Registry Paths
 $RegPathList = @(
     "HKLM:\Software\DameWare Development"
     "HKLM:\Software\WOW6432Node\DameWare Development Common Data"
     "HKLM:\Software\WOW6432Node\SolarWinds"
 )
-#MSI Code List
+#Set Registry Values Paths
+$RegValueList = @(
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run\DameWare MRC Agent"
+)
+#MSI Code Lists
 $MSICodeList = @()
 $MSIPaths = @(
-    "HKLM:\software\Microsoft\Windows\CurrentVersion\Uninstall\*",
-    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
 )
 
 
@@ -250,7 +254,6 @@ Function DeleteService {
 
 Function RegClean {
     foreach ($RegPath in $RegPathList) {
-
         if (Test-Path -Path $RegPath) {
             try {
                 $LogBuffer = "$RegPath was found in the registry."
@@ -266,7 +269,6 @@ Function RegClean {
                 } else {
                     $LogBuffer = "ERROR: $RegPath still exists after deletion attempt."
                 }
-
                 outlog
             }
             catch {
@@ -276,6 +278,38 @@ Function RegClean {
         }
         else {
             $LogBuffer = "WARNING: $RegPath not found in the registry."
+            outlog
+        }
+    }
+
+    foreach ($RegValue in $RegValueList) {
+        $ValueSplit = $RegValue -split '\\'
+        $RegValueName = $ValueSplit[-1]
+        $RegValuePath = ($ValueSplit[0..($ValueSplit.Count - 2)] -join '\')
+        if (Get-ItemProperty -Path $RegValuePath -Name $RegValueName -ErrorAction SilentlyContinue) {
+            try {
+                $LogBuffer = "$RegValueName was found in the registry."
+                outlog
+
+                $LogBuffer = "Deleting $RegValueName."
+                outlog
+
+                Remove-ItemProperty -Path $RegValuePath -Name $RegValueName -ErrorAction SilentlyContinue -Force
+
+                if (-not (Get-ItemProperty -Path $RegValuePath -Name $RegValueName -ErrorAction SilentlyContinue)) {
+                    $LogBuffer = "SUCCESS: $RegValue was removed from the registry."
+                } else {
+                    $LogBuffer = "ERROR: $RegValue still exists after deletion attempt."
+                }
+                outlog
+            }
+            catch {
+                $LogBuffer = "Registry clean error: $_"
+                outlog
+            }
+        }
+        else {
+            $LogBuffer = "WARNING: $RegValue not found in the registry."
             outlog
         }
     }
