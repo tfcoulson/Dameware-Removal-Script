@@ -1,6 +1,8 @@
 21 May 2026
 Updated to search for MSI locations instead of manual entry to target different dameware versions.
+
 Updated registry locations to remove if still left after install.
+
 Formatted script as original one did not work.
 
 ---------------------------------------------------------------------------------------------------
