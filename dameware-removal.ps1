@@ -6,12 +6,18 @@ $ServiceList = "DWMRCS",
 "DNTUS26"
 
 #Set Registry Path
-$RegPathList = "HKLM:\Software\DameWare Development"
-
+$RegPathList = @(
+    "HKLM:\Software\DameWare Development"
+    "HKLM:\Software\WOW6432Node\DameWare Development Common Data"
+    "HKLM:\Software\WOW6432Node\SolarWinds"
+)
 #MSI Code List
-$MSICodeList =
-"{385FED21-85D3-401E-8B8A-38140333FAC8}", #x64 installer
-"{9F660272-3D31-47CE-BEB6-7A065B8901A5}" #x32 installer
+$MSICodeList = @()
+$MSIPaths = @(
+    "HKLM:\software\Microsoft\Windows\CurrentVersion\Uninstall\*",
+    "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+)
+
 
 #List of Files to search for
 $FindFileList =
@@ -22,7 +28,7 @@ $FindFileList =
 $FindFolder = "DWRCS" #Known location of Dameware files; also known to reside in the system32 folder but we don't want to delete system32
 
 #Possible registered DLLs
-$registeredDLLs =
+$registeredDLLs = @(
 "$env:windir\DWRCS\DWRCSh.dll",
 "$env:windir\DWRCS\DWRCSE.dll",
 "$env:windir\DWRCS\DWRCSET.dll",
@@ -30,7 +36,7 @@ $registeredDLLs =
 "$env:windir\DWRCS\DWRCRSS.dll",
 "$env:windir\DWRCS\DWRCK.dll",
 "$env:windir\DWRCS\DWRCWXL.dll"
-
+)
 
 #Define Functions
 Function GetTimeDate {
@@ -46,17 +52,18 @@ Function GetTimeDate {
 }
 
 Function OutLog {
-    ((GetTimeDate) + " " + $LogBuffer) | out-file -FilePath $logfile -Append
+    ((GetTimeDate) + " " + $LogBuffer) | Out-File -FilePath $logfile -Append
     switch -Wildcard ($LogBuffer) {
-        "Error*" { write-host ((GetTimeDate) + " " + $LogBuffer) -ForegroundColor Red }
-        "Warning*" { write-host ((GetTimeDate) + " " + $LogBuffer) -ForegroundColor Yellow }
-        Default { write-host ((GetTimeDate) + " " + $LogBuffer) }
+        "Error*" { Write-Host ((GetTimeDate) + " " + $LogBuffer) -ForegroundColor Red }
+        "Warning*" { Write-Host ((GetTimeDate) + " " + $LogBuffer) -ForegroundColor Yellow }
+        Default { Write-Host ((GetTimeDate) + " " + $LogBuffer) }
     }
 
 }
 
 Function filedelete ($fileLocation) {
-        if (Test-Path $fileLocation) {
+    if (Test-Path $fileLocation) {
+        try {
             $LogBuffer = $fileLocation + " was found."
             outlog
             $LogBuffer = "Deleting " + $fileLocation + "."
@@ -66,129 +73,214 @@ Function filedelete ($fileLocation) {
             if (Test-Path $fileLocation) {
                 $LogBuffer = "Error: " + $fileLocation + " was not deleted."
                 outlog
-            } else {
+             } else {
                 $LogBuffer = $fileLocation + " was successfully deleted."
                 outlog
-            }
-        } else {
-            $LogBuffer = "Warning: " + $fileLocation + " was not found."
+             }
+         } catch {
+            $LogBuffer = "File delete error: $_"
             outlog
-        }
+         }
+     } else {
+        $LogBuffer = "Warning: " + $fileLocation + " was not found."
+        outlog
+     }
 }
 
-Function FolderDelete ($folder) {
+function FolderDelete ($folder) {
     if ($folder -match $FindFolder) {
-        if (remove-item $folder -recurse -force -ErrorAction SilentlyContinue) {
-            $LogBuffer = $folder + " was successfully deleted."
+        try {
+            Remove-Item -Path $folder -Recurse -Force -ErrorAction Stop
+
+            if (-not (Test-Path $folder)) {
+                $LogBuffer = "$folder was successfully deleted."
+            } else {
+                $LogBuffer = "Error: $folder was not successfully deleted."
+            }
+
             outlog
-        } else {
-            $LogBuffer = "Error: " + $folder + " was not successfully deleted."
+        }
+        catch {
+            $LogBuffer = "Folder delete error: $_"
             outlog
         }
     }
 }
+
 Function FindFile {
-    foreach ($FindFile in $FindFileList) {
-        $LogBuffer = "Searching for " + $FindFile + "."
+    foreach ($fileName in $FindFileList) {
+        $LogBuffer = "Searching for $fileName."
         outlog
-        $files = Get-ChildItem -path $env:systemroot -Filter $FindFile -Recurse -ErrorAction SilentlyContinue
-        if ($files -eq $null) {
-            $LogBuffer = "Warning: "+ $FindFile + " was not found."
+
+        $files = Get-ChildItem -Path $env:systemroot -Filter $fileName -Recurse -ErrorAction SilentlyContinue
+
+        if (-not $files) {
+            $LogBuffer = "Warning: $fileName was not found."
             outlog
-        } else {
-            $folder = $files.DirectoryName
-            $fileLocation = $files.FullName
-            $LogBuffer = "Found " + $FindFile + " in " + $folder
-            outlog
-            filedelete($fileLocation)
-            folderdelete($folder)
+        }
+        else {
+            foreach ($file in $files) {
+                $folder = $file.DirectoryName
+                $fileLocation = $file.FullName
+
+                $LogBuffer = "Found $fileName in $folder"
+                outlog
+
+                filedelete $fileLocation
+                folderdelete $folder
+            }
         }
     }
 }
+
 
 Function MSIx {
-    foreach ($MSICode in $MSICodeList) {
-        $LogBuffer = "Executing MSI Uninstall string: MSIEXEC.EXE /X" + $MSICode + " /QN /NORESTART"
-        outlog
-        $process = Start-Process -FilePath "msiexec.exe" -ArgumentList "/X$MSICode", "/QN", "/NORESTART" -Wait -PassThru
-        $Exit = $process.ExitCode
-
-    switch ($Exit) {
-        "1603" {
-            $LogBuffer = "MSI Result Code was: " + $Exit + " Error: Fatal error during uninstallation. Application not removed."
-            outlog
-        }
-        "1605" {
-            $LogBuffer = "Warning: MSI Result Code was: " + $Exit + " Application is not installed."
-            outlog
-        }
-        "0" {
-            $LogBuffer = "Warning: MSI Result code was: " + $Exit + " Application successfully uninstalled."
-            outlog
-            MSISuccessHandler
-        }
-        Default {
-            $LogBuffer = "Error: MSI Result Code was: " + $Exit
-            outlog }
+    foreach ($MSIPath in $MSIPaths) {
+        Get-ItemProperty $MSIPath | Where-Object {$_.displayname -like "dameware*"} | ForEach-Object { $MSICodeList += $_.PSChildName }
     }
-    $LogBuffer = "It looks like PowerShell."
-    outlog
+    foreach ($MSICode in $MSICodeList) {
+        try {
+            $LogBuffer = "Executing MSI uninstall: msiexec.exe /X $MSICode /QN /NORESTART"
+            outlog
+
+            $process = Start-Process -FilePath "msiexec.exe" `
+                -ArgumentList "/X $MSICode /QN /NORESTART" `
+                -Wait -PassThru
+
+            $Exit = $process.ExitCode
+
+            switch ($Exit) {
+                0 {
+                    $LogBuffer = "SUCCESS: MSI uninstall completed (Code: $Exit)."
+                    outlog
+                    MSISuccessHandler
+                }
+                3010 {
+                    $LogBuffer = "SUCCESS: MSI uninstall completed, reboot required (Code: $Exit)."
+                    outlog
+                }
+                1603 {
+                    $LogBuffer = "ERROR: Fatal error during uninstall (Code: $Exit)."
+                    outlog
+                }
+                1605 {
+                    $LogBuffer = "WARNING: Application not installed (Code: $Exit)."
+                    outlog
+                }
+                1614 {
+                    $LogBuffer = "INFO: Product already uninstalled (Code: $Exit)."
+                    outlog
+                }
+                1619 {
+                    $LogBuffer = "ERROR: MSI package could not be opened (Code: $Exit)."
+                    outlog
+                }
+                default {
+                    $LogBuffer = "ERROR: Unknown MSI result code: $Exit"
+                    outlog
+                }
+            }
+        }
+        catch {
+            $LogBuffer = "MSI uninstall exception: $_"
+            outlog
+        }
     }
 }
 
 Function DeleteService {
     foreach ($ServiceName in $Servicelist) {
-        if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
-            $ServName = Get-Service -Name $ServiceName
-            $LogBuffer = "The service '" + $ServName.DisplayName + "' was found."
-            outlog
-            $LogBuffer = "Stopping service: '" + $ServName.DisplayName + "'"
-            outlog
-            Set-Service $ServName.Name -Status Stopped
-            $ServiceStatus = Get-Service -Name $ServName.Name
-            $LogBuffer = "The Service: '" + $ServName.DisplayName + "' is " + $ServiceStatus.Status + "."
-            outlog
-            $LogBuffer = "Deleting the service '" + $ServName.DisplayName + "'."
-            outlog
- 
-            $null = (Get-WmiObject win32_service | Where-Object {$_.Name -Like $ServName.Name}).delete()
-            Start-Sleep -Seconds 10
 
-            if (Get-Service -Name $ServName.Name -ErrorAction SilentlyContinue) {
-                $LogBuffer = "Error: The service: '" + $ServName.DisplayName + "' was not deleted."
+        $ServName = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+
+        if ($ServName) {
+            try {
+                $LogBuffer = "Service found: '$($ServName.DisplayName)'"
                 outlog
-            } else {
-                $LogBuffer = "The service: '" + $ServName.DisplayName + "' was successfully deleted."
+
+                if ($ServName.Status -ne 'Stopped') {
+                    $LogBuffer = "Stopping service: '$($ServName.DisplayName)'"
+                    outlog
+
+                    Stop-Service -Name $ServName.Name -Force -ErrorAction Stop
+                    $ServName.WaitForStatus('Stopped', '00:00:30')
+                }
+
+                $LogBuffer = "Service is now stopped."
+                outlog
+
+                $LogBuffer = "Deleting service: '$($ServName.DisplayName)'"
+                outlog
+
+                $serviceCim = Get-CimInstance Win32_Service -Filter "Name='$($ServName.Name)'"
+
+                if ($serviceCim) {
+                    $null = Invoke-CimMethod -InputObject $serviceCim -MethodName Delete
+                }
+
+                $deleted = $false
+                for ($i = 0; $i -lt 10; $i++) {
+                    if (-not (Get-Service -Name $ServName.Name -ErrorAction SilentlyContinue)) {
+                        $deleted = $true
+                        break
+                    }
+                    Start-Sleep -Seconds 2
+                }
+
+                if ($deleted) {
+                    $LogBuffer = "SUCCESS: Service '$($ServName.DisplayName)' deleted."
+                } else {
+                    $LogBuffer = "ERROR: Service '$($ServName.DisplayName)' still exists after deletion attempt."
+                }
+
                 outlog
             }
-        } else {
-            $LogBuffer = "Warning: The service: '" + $ServiceName + "' was not found."
+            catch {
+                $LogBuffer = "Delete service error: $_"
+                outlog
+            }
+        }
+        else {
+            $LogBuffer = "WARNING: Service '$ServiceName' not found."
             outlog
         }
     }
 }
+
 
 Function RegClean {
     foreach ($RegPath in $RegPathList) {
-        if (Test-Path $RegPath) {
-            $LogBuffer = $RegPath + " was found in the registry."
-            outlog
-            $LogBuffer = "Deleting " + $RegPath + "."
-            outlog
-            Remove-Item $RegPath -Recurse -Force
-            if (Test-Path $RegPath) {
-                $LogBuffer = "Error: " + $RegPath + " was not deleted from the registry."
+
+        if (Test-Path -Path $RegPath) {
+            try {
+                $LogBuffer = "$RegPath was found in the registry."
                 outlog
-            } else {
-                $LogBuffer = $RegPath + " was successfully deleted from the registry."
+
+                $LogBuffer = "Deleting $RegPath."
+                outlog
+
+                Remove-Item -Path $RegPath -Recurse -Force -ErrorAction Stop
+
+                if (-not (Test-Path -Path $RegPath)) {
+                    $LogBuffer = "SUCCESS: $RegPath was removed from the registry."
+                } else {
+                    $LogBuffer = "ERROR: $RegPath still exists after deletion attempt."
+                }
+
                 outlog
             }
-        } else {
-            $LogBuffer = "Warning: " + $RegPath + " was not found in the registry."
+            catch {
+                $LogBuffer = "Registry clean error: $_"
+                outlog
+            }
+        }
+        else {
+            $LogBuffer = "WARNING: $RegPath not found in the registry."
             outlog
         }
     }
 }
+
 
 Function StartLog {
     $LogBuffer = "----====Logging started====----"
@@ -202,37 +294,46 @@ Function StopLog {
 Function MSISuccessHandler {
     if ($Exit -eq "0")
     {
-        $LogBuffer = "Warning: MSI uninstall was successful. Remainder of script is probably not necessary."
+        $LogBuffer = "Notice: MSI uninstall was successful."
         outlog
     }
 }
+
 Function RegSvr {
     foreach ($dll in $registeredDLLs) {
-        $registered = reg query HKLM\SOFTWARE\Classes /s /f $dll
-        if ($registered -match '(?i)(C:\\Windows\\\S+)') {
-            $LogBuffer = "The registered DLL '" + $dll + "' was found."
+
+        if (-not (Test-Path $dll)) {
+            $LogBuffer = "WARNING: DLL not found: $dll"
             outlog
-            $LogBuffer = "Unregistering DLL: '" + $dll + "'"
+            continue
+        }
+
+        try {
+            $LogBuffer = "Unregistering DLL: $dll"
             outlog
-            regsvr32 /u /s $dll
-            Start-Sleep -Seconds 10
-            $registered = reg query HKLM\SOFTWARE\Classes /s /f $dll
-            if ($registered -match '(?i)(C:\\Windows\\\S+)') {
-                $LogBuffer = "Error: The DLL: '" + $dll + "' was not unregistered."
-                outlog
+
+            $process = Start-Process -FilePath "regsvr32.exe" `
+                -ArgumentList "/u /s `"$dll`"" `
+                -Wait -PassThru
+
+            $exitCode = $process.ExitCode
+
+            if ($exitCode -eq 0) {
+                $LogBuffer = "SUCCESS: DLL unregistered: $dll"
             } else {
-                $LogBuffer = "The service: '" + $dll + "' was successfully unregistered."
-                outlog
+                $LogBuffer = "ERROR: Failed to unregister DLL ($dll). Exit code: $exitCode"
             }
-        } else {
-            $LogBuffer = "Warning: The DLL: '" + $dll + "' was not found."
+
+            outlog
+        }
+        catch {
+            $LogBuffer = "RegSvr unregister error: $_"
             outlog
         }
     }
 }
 
 
-#Do all the things
 StartLog
 MSIx
 DeleteService
